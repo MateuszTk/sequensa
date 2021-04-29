@@ -27,6 +27,8 @@
 #include "modules.hpp"
 
 bool failed = false;
+bool singular = false;
+bool silent = false;
 
 bool build( std::string input, std::vector<seq::byte>* buffer, std::vector<std::string>* dependencies, std::vector<std::string>* natives, bool verbose, seq::Compiler& compiler ) {
 
@@ -43,12 +45,7 @@ bool build( std::string input, std::vector<seq::byte>* buffer, std::vector<std::
 			std::string content( (std::istreambuf_iterator<char>(infile)), (std::istreambuf_iterator<char>()) );
 			*buffer = compiler.compile(content);
 
-		}catch( seq::CompilerError& err ){
-
-			std::cout << "Error: " << err.what() << std::endl;
-			failed = true;
-
-		}
+		}catch( seq::CompilerError& err ){}
 
 		// set by error handle
 		if( failed ) {
@@ -188,7 +185,7 @@ bool build_tree( std::string input, std::string output, bool verbose, seq::Compi
 			auto header = build_header_map( natives, strings );
 			std::vector<seq::byte> arr;
 			seq::BufferWriter bw(arr);
-			bw.putFileHeader(SEQ_API_VERSION_MAJOR, SEQ_API_VERSION_MINOR, SEQ_API_VERSION_PATCH, header);
+			bw.putHeader(SEQ_API_VERSION_MAJOR, SEQ_API_VERSION_MINOR, SEQ_API_VERSION_PATCH, header);
 			outfile.write((char*)arr.data(), arr.size());
 		}
 
@@ -221,20 +218,28 @@ void build( ArgParse& argp, Options opt ) {
 	}
 
 	if( vars.size() == 2 ) {
+		singular = opt.no_multi_error;
+		silent = opt.no_warn;
 
-		if( !opt.no_multi_error ) {
-			compiler.setErrorHandle( [] (seq::CompilerError err) {
-				if( err.isError() ) {
-					if( err.isCritical() ) {
-						std::cout << "Fatal: ";
-						throw err;
-					}
+		compiler.setErrorHandle( [] (seq::CompilerError* err) -> bool {
+			if( err->isCritical() ) {
+				std::cout << "Fatal: " << err->what() << std::endl;
+				failed = true;
+				return true;
+			}
 
-					std::cout << "Error: " << err.what() << std::endl;
-					failed = true;
-				}
-			} );
-		}
+			if( err->isError() ) {
+				std::cout << "Error: " << err->what() << std::endl;
+				failed = true;
+				return singular;
+			}
+
+			if( err->isWarning() && !silent ) {
+				std::cout << "Warning: " << err->what() << std::endl;
+			}
+
+			return false;
+		} );
 
 		if( !build_tree( vars.at(0), vars.at(1), opt.verbose, compiler, table ) ) {
 
